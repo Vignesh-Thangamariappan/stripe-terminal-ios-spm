@@ -1,0 +1,92 @@
+name: Sync Files and Releases from Another Repo
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Runs the workflow every day at midnight (adjust the cron schedule as needed)
+    - cron: "0 0 * * *"
+
+jobs:
+  sync-files:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout current repo
+        uses: actions/checkout@v3
+      
+      - name: Set up Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Step 1: Fetch latest tag from your repository
+      - name: Get Latest Tag from Current Repo
+        id: current-repo-tag
+        run: |
+          git fetch --tags
+          latest_current_tag=$(git describe --tags `git rev-list --tags --max-count=1` || echo "0.0.0")
+          echo "Latest tag in current repo: $latest_current_tag"
+          echo "LATEST_CURRENT_TAG=$latest_current_tag" >> $GITHUB_ENV
+
+      # Step 2: Fetch all tags from the target repository and filter for strict semantic versioning
+      - name: Get Tags from Target Repo and Filter by Strict Semantic Versioning
+        id: get-tags
+        run: |
+          git clone https://github.com/stripe/stripe-terminal-ios.git
+          cd stripe-terminal-ios
+          git fetch --tags
+          # Get all tags and filter for those that match strict semantic versioning (e.g., 1.0.0, 2.1.3)
+          all_tags=$(git tag -l --sort=v:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | tr '\n' ' ')
+          echo "ALL_TAGS=$all_tags" >> $GITHUB_ENV
+        shell: bash
+
+      # Step 3: Compare tags and find newer semantic versioned tags
+      - name: Find Newer Semantic Versioned Tags
+        id: newer-tags
+        run: |
+          current_tag=$LATEST_CURRENT_TAG
+          new_tags=""
+          for tag in $ALL_TAGS; do
+            # Compare the tags, ignore the current tag
+            if [ "$(printf '%s\n' "$current_tag" "$tag" | sort -V | head -n1)" != "$tag" ] && [ "$tag" != "$current_tag" ]; then
+              new_tags="$new_tags $tag"
+            fi
+          done
+          if [ -z "$new_tags" ]; then
+            echo "No new tags found."
+            exit 0
+          fi
+          echo "New tags found: $new_tags"
+          echo "NEW_TAGS=$new_tags" >> $GITHUB_ENV
+        shell: bash
+
+      # Step 4: Process Each New Tag, commit, push, and create a GitHub release
+      - name: Process and Commit for Each New Tag
+        if: success()  # Only run if new tags are found
+        run: |
+          for tag in $NEW_TAGS; do
+            echo "Processing tag: $tag"
+            # Step 5: Checkout tag and copy necessary files
+            cd stripe-terminal-ios
+            git checkout "$tag"
+            cp Package.swift ../
+            cp LICENSE ../
+            cd ..
+            
+            # Step 6: Fetch GitHub release notes for the tag
+            release_notes=$(gh release view "$tag" --repo stripe/stripe-terminal-ios --json body -q '.body')
+            echo "Release notes for $tag: $release_notes"
+
+            # Step 7: Commit and push the changes for this tag individually
+            git add Package.swift
+            git add LICENSE
+            git commit -m "Stripe Terminal iOS release: $tag"
+            git push
+
+            # Step 8: Create GitHub release on your current repo (without release notes)
+            gh release create "$tag" --title "$tag" --notes "$release_notes" --target "${{ github.ref_name }}"
+            echo "GitHub release created for tag: $tag"
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash

@@ -4,6 +4,9 @@
 # Except few required files...
 ## Gitignore obviously
 !.gitignore
+## workflows
+!.github
+!.github/**/*
 ## Readme
 !README.md
 ## And start of the show!
