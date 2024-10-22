@@ -1,0 +1,11 @@
+# Ignore everything
+*
+
+# Except few required files...
+## Gitignore obviously
+!.gitignore
+## Readme
+!README.md
+## And start of the show!
+!Package.swift
+!LICENSE
